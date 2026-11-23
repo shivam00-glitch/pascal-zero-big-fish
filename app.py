@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from engine import calculate, summarize_trades
 from data import normalize_ohlcv, load_csv
-from broker import get_broker_status, fetch_live_candles
+from broker import get_broker_status, UPSTOX_SYMBOLS, get_upstox_login_url, get_upstox_access_token, fetch_upstox_candles
 
 st.set_page_config(page_title="PASCAL ZERO | BIG FISH", page_icon="〽️", layout="wide")
 st.title("〽️ PASCAL ZERO — BIG FISH")
@@ -14,14 +14,64 @@ with st.sidebar:
     st.header("Engine settings")
     length = st.slider("Momentum lookback", 3, 50, 10)
     smooth = st.slider("Smoothing", 1, 15, 3)
-    symbol_input = st.text_input("Symbol / Instrument", "NSE:NIFTYBANK")
     st.divider()
     st.subheader("Data source")
-    source = st.radio("Choose data", ["Upload CSV", "Broker API (adapter)"])
-    st.caption("Live data requires a broker-specific adapter and credentials.")
+    source = st.radio("Choose data", ["Upstox API", "Upload CSV"])
 
 df = None
-if source == "Upload CSV":
+symbol_input = "NSE:NIFTYBANK"
+
+if source == "Upstox API":
+    try:
+        api_key = st.secrets["UPSTOX_API_KEY"]
+        api_secret = st.secrets["UPSTOX_API_SECRET"]
+        redirect_uri = st.secrets["UPSTOX_REDIRECT_URI"]
+    except:
+        st.error("Streamlit Secrets-la API Key illa. Secrets settings check pannunga.")
+        st.stop()
+
+    if "upstox_token" not in st.session_state:
+        st.session_state["upstox_token"] = None
+
+    if st.session_state["upstox_token"] is None:
+        with st.sidebar:
+            st.markdown("### 1. Upstox Login")
+            login_url = get_upstox_login_url(api_key, redirect_uri)
+            st.markdown(f"[Click here to Login with Upstox]({login_url})")
+            st.markdown("### 2. Auth Code Paste")
+            auth_code = st.text_input("Paste the code from redirect URL", type="password")
+            if st.button("Get Access Token"):
+                if auth_code:
+                    with st.spinner("Getting token..."):
+                        try:
+                            token = get_upstox_access_token(api_key, api_secret, auth_code, redirect_uri)
+                            st.session_state["upstox_token"] = token
+                            st.success("Logged in successfully!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Login failed: {e}")
+                else:
+                    st.warning("Paste the code first.")
+        st.stop()
+    else:
+        with st.sidebar:
+            st.success("Upstox Connected ✅")
+            symbol_input = st.selectbox("Select Stock / Index", list(UPSTOX_SYMBOLS.keys()))
+            interval = st.selectbox("Candle interval", ["1minute", "5minute", "15minute", "30minute"], index=1)
+            if st.button("Refresh Data"):
+                st.rerun()
+        
+        with st.spinner(f"Fetching {symbol_input} data..."):
+            try:
+                df = fetch_upstox_candles(symbol_input, interval, st.session_state["upstox_token"])
+            except Exception as e:
+                st.error(f"Data fetch fail aachu: {e}")
+                if st.button("Logout / Reset Token"):
+                    st.session_state["upstox_token"] = None
+                    st.rerun()
+                st.stop()
+
+elif source == "Upload CSV":
     uploaded = st.file_uploader("Upload OHLCV CSV", type=["csv"])
     if uploaded:
         try:
@@ -29,28 +79,17 @@ if source == "Upload CSV":
             st.success(f"Loaded {len(df)} candles")
         except Exception as e:
             st.error(f"Could not read CSV: {e}")
-else:
-    st.info("Broker adapter is ready to be connected.")
-    st.write("Adapter status:", get_broker_status())
-    broker = st.selectbox("Broker", ["Not selected", "Zerodha Kite Connect", "Upstox", "Angel One", "Other"])
-    symbol_input = st.text_input("Instrument / symbol", symbol_input)
-    interval = st.selectbox("Candle interval", ["1minute", "3minute", "5minute", "15minute", "day"], index=2)
-    if st.button("Check live adapter"):
-        st.warning("No broker credentials configured yet.")
-    df = None
+    
+    with st.sidebar:
+        if df is not None:
+            symbol_input = st.text_input("Chart Title", "Uploaded CSV")
 
 if df is None:
-    st.markdown("### CSV format")
-    st.code("timestamp,open,high,low,close,volume\n2026-11-20 09:15,63000,63100,62950,63080,125000", language="csv")
-    st.markdown("""
-    **How to start**
-    1. Export historical OHLCV candles from your broker.
-    2. Upload the CSV above.
-    3. Review candle + volume + Pascal oscillator.
-    """)
+    st.markdown("### CSV format or Upstox Login")
+    st.info("Please select Upstox API and login or upload a CSV file from the sidebar.")
     st.stop()
 
-# Ensure OHLC columns exist
+# Checks for OHLC
 for col in ["open", "high", "low", "close"]:
     if col not in df.columns:
         df[col] = df["close"]
