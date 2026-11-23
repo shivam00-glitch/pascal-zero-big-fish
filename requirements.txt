@@ -2,4 +2,7 @@ streamlit>=1.38,<2
 pandas>=2.0,<3
 numpy>=1.26,<3
 plotly>=5.20,<7
+requests>=2.31,<3
+streamlit-autorefresh>=1.0,<2
+pytz>=2024.1
 pytest>=8,<9
